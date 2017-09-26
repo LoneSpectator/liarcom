@@ -10,7 +10,8 @@ import inspect, ctypes
 # local config
 USER_NAME = ""
 PASSWORD = ""
-LOCAL_MAC = ""
+LOCAL_MAC = ""  # 选填，默认为空，应填写本机网卡MAC，全小写，无连接符，如：001a264a7b0d
+LOCAL_IP = ""  # 选填，默认为空，应填写本机IP，如：192.168.100.123
 # login config
 SERVER_IP = '192.168.211.3'
 DHCP_SERVER_IP = '211.68.32.204'
@@ -18,8 +19,9 @@ CONTROL_CHECK_STATUS = '\x20'
 ADAPTER_NUMBER = '\x01'
 IP_DOG = '\x01'
 AUTH_VERSION = '\x0a\x00'
-KEEP_ALIVE_VERSION = '\x0f\x27'
+KEEP_ALIVE_VERSION = '\xdc\x02'
 # app config
+LOG_MODE = 0
 RETRY_TIMES = 3
 
 
@@ -119,6 +121,16 @@ class Drcom(object):
         self.salt = ""
         self.auth_info = ""
 
+        if (LOCAL_MAC == ""):  # 如果没有指定本机MAC，尝试自动获取
+            self.mac = uuid.UUID(int=uuid.getnode()).hex[-12:].decode("hex")
+        else:
+            self.mac = LOCAL_MAC.decode("hex")
+        self.host_name = socket.getfqdn(socket.gethostname())
+        if (LOCAL_IP == ""):
+            self.ip = socket.gethostbyname(self.host_name)
+        else:
+            self.ip = LOCAL_IP
+
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
         self.socket.settimeout(3)
         try:
@@ -181,29 +193,22 @@ class Drcom(object):
 
     def make_login_package(self):
         # 构造登陆包
-        if (LOCAL_MAC == ""):  # 如果没有指定本机MAC，尝试自动获取
-            local_mac = uuid.UUID(int=uuid.getnode()).hex[-12:].decode("hex")
-        else:
-            local_mac = LOCAL_MAC.decode("hex")
-        local_host_name = socket.getfqdn(socket.gethostname())
-        local_ip = socket.gethostbyname(local_host_name)
-
         data = '\x03\x01\x00' + chr(len(self.usr) + 20)  # (0:3 4) Header = Code + Type + EOF + (UserName Length + 20)
         data += md5('\x03\x01' + self.salt + self.pwd)  # (4:19 16) MD5_A = MD5(Code + Type + Salt + Password)
         data += self.usr.ljust(36, '\x00')  # (20:55 36) 用户名
         data += CONTROL_CHECK_STATUS  # (56:56 1) 控制检查状态
         data += ADAPTER_NUMBER  # (57:57 1) 适配器编号？
-        data += int2hex_str(long(data[4:10].encode('hex'), 16) ^ long(local_mac.encode('hex'), 16)).rjust(6, '\x00')  # (58:63 6) (MD5_A xor MAC)
+        data += int2hex_str(long(data[4:10].encode('hex'), 16) ^ long(self.mac.encode('hex'), 16)).rjust(6, '\x00')  # (58:63 6) (MD5_A xor MAC)
         data += md5('\x01' + self.pwd + self.salt + '\x00'*4)  # (64:79 16) MD5_B = MD5(0x01 + Password + Salt + 0x00 *4)
         data += '\x01'  # (80:80 1) NIC Count
-        data += socket.inet_aton(local_ip)  # (81:84 4) 本机IP
+        data += socket.inet_aton(self.ip)  # (81:84 4) 本机IP
         data += '\00' * 4  # (85:88 4) ip地址 2
         data += '\00' * 4  # (89:92 4) ip地址 3
         data += '\00' * 4  # (93:96 4) ip地址 4
         data += md5(data + '\x14\x00\x07\x0b')[:8]  # (97:104 8) 校验和A
         data += IP_DOG  # (105:105 1) IP Dog
         data += '\x00' * 4  # (106:109 4) 未知
-        data += local_host_name.ljust(32, '\x00')  # (110:141 32) 主机名
+        data += self.host_name.ljust(32, '\x00')  # (110:141 32) 主机名
         data += '\x72\x72\x72\x72'  # (142:145 4) 主要dns: 114.114.114.114
         data += socket.inet_aton(DHCP_SERVER_IP)  # (146:149 4) DHCP服务器IP
         data += '\x08\x08\x08\x08'  # (150:153 4) 备用dns:8.8.8.8
@@ -217,9 +222,9 @@ class Drcom(object):
         data += '\x00' * 96  # (214:309 96) 未知 不同客户端有差异，BISTU版此字段包含一段识别符，但不影响登陆
         data += AUTH_VERSION  # (310:311 2)
         data += '\x02\x0c'  # (312:313 2) 未知
-        data += checksum(data + '\x01\x26\x07\x11\x00\x00' + local_mac)  # (314:317 4) 校验和
+        data += checksum(data + '\x01\x26\x07\x11\x00\x00' + self.mac)  # (314:317 4) 校验和
         data += '\x00\x00'  # (318:319 2) 未知
-        data += local_mac   # (320:325 6) 本机MAC
+        data += self.mac   # (320:325 6) 本机MAC
         data += '\x00'  # (326:326 1) auto logout / default: False
         data += '\x00'  # (327:327 1) broadcast mode / default : False
         data += '\x17\x77'  # (328:329 2) 未知 不同客户端有差异
@@ -298,10 +303,10 @@ class Drcom(object):
         data += '\x28\x00\x0b'  # (2:4 3) 未知
         data += chr(type)  # (5:5 1) 类型
         if (num == 0):  # (6:7 2) BISTU版此字段不会变化
-            data += '\x0f\x27'
+            data += '\xdc\x02'
         else:
             data += KEEP_ALIVE_VERSION
-        data += '\x2f\x12'  # (8:9 2) 未知 每个包会有变化
+        data += '\x2f\x79'  # (8:9 2) 未知 每个包会有变化
         data += '\x00' * 6  # (10:15 6) 未知
         data += key  # (16:19 4)
         data += '\x00' * 4  # (20:23 4) 未知
@@ -310,17 +315,14 @@ class Drcom(object):
         if (type == 1):
             data += '\x00' * 16  # (24:39 16) 未知
         if (type == 3):  # 未验证
-            local_host_name = socket.getfqdn(socket.gethostname())
-            local_ip = socket.gethostbyname(local_host_name)
-
-            foo = ''.join([chr(int(i)) for i in local_ip.split('.')])  # host_ip
+            foo = ''.join([chr(int(i)) for i in self.ip.split('.')])  # host_ip
             # use double keep in main to keep online .Ice
             crc = '\x00' * 4
             # data += struct.pack("!I",crc) + foo + '\x00' * 8
             data += crc + foo + '\x00' * 8
         return data
 
-    def send_alive_pkg2(self, num, key, type=3):
+    def send_alive_pkg2(self, num, key, type):
         # 发送心跳包
         pkg = self.make_alive_package(num = num, key = key, type = type)
 
@@ -348,38 +350,29 @@ class Drcom(object):
         raise e
 
     def keep_alive(self):
-        num = 1
+        num = 0
         key = '\x00' * 4
         while True:
             try:
                 self.send_alive_pkg1()
-
-                if (num == 0 or num == 1):
-                    key = self.send_alive_pkg2(num, '\x00' * 4)
-
-                else:
-                    key = self.send_alive_pkg2(num, key)
+                key = self.send_alive_pkg2(num, key, type=1)
+                key = self.send_alive_pkg2(num, key, type=3)
 
             except TimeoutException as e:
                 log(2, 60, "[keep_alive]：" + e.error_info)
                 return False
 
-            num = num + 1
+            num = num + 2
             time.sleep(20)
 
     def make_logout_package(self):
-        if (LOCAL_MAC == ""):  # 如果没有指定本机MAC，尝试自动获取
-            local_mac = uuid.UUID(int=uuid.getnode()).hex[-12:].decode("hex")
-        else:
-            local_mac = LOCAL_MAC.decode("hex")
-
         data = '\x06\x01\x00' + chr(len(self.usr) + 20)  # (0:3 4) Header = Code + Type + EOF + (UserName Length + 20)
         # TODO MD5_A字段在BISTU版中的算法未知，但以下算法可以正常使用
         data += md5('\x06\x01' + self.salt + self.pwd)  # (4:19 16) MD5_A = MD5(Code + Type + Salt + Password)
         data += self.usr.ljust(36, '\x00')  # (20:55 36) 用户名
         data += CONTROL_CHECK_STATUS  # (56:56 1) 控制检查状态
         data += ADAPTER_NUMBER  # (57:57 1) 适配器编号？
-        data += int2hex_str(long(data[4:10].encode('hex'), 16) ^ long(local_mac.encode('hex'), 16)).rjust(6, '\x00')  # (58:63 6) (MD5_A xor MAC)
+        data += int2hex_str(long(data[4:10].encode('hex'), 16) ^ long(self.mac.encode('hex'), 16)).rjust(6, '\x00')  # (58:63 6) (MD5_A xor MAC)
         data += self.auth_info
         return data
 
