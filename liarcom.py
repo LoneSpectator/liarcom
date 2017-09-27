@@ -299,7 +299,7 @@ class Drcom(object):
     def make_alive_package(self, num, key, type):
         # 构造心跳包
         data = '\x07'  # (0:0 1) 未知
-        data += chr(num)  # (1:1 1) 编号
+        data += chr(num % 256)  # (1:1 1) 编号
         data += '\x28\x00\x0b'  # (2:4 3) 未知
         data += chr(type)  # (5:5 1) 类型
         if (num == 0):  # (6:7 2) BISTU版此字段不会变化
