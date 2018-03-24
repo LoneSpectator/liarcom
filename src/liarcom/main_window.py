@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
+# Licensed under the GPLv3
+# 本项目由@Everyb0dyLies开发维护，使用python3
 
 from PyQt5 import QtCore, QtGui, QtWidgets
+
 
 class Ui_MainWindow(object):
     def setupUi(self, MainWindow):
@@ -104,4 +107,12 @@ class Ui_MainWindow(object):
         self.gridLayout1.addItem(spacerItem3, 0, 6, 1, 1)
 
         QtCore.QMetaObject.connectSlotsByName(MainWindow)
+
+
+class MainWindow(QtWidgets.QMainWindow, Ui_MainWindow):
+    def __init__(self, controller, parent=None):
+        super(MainWindow, self).__init__(parent)
+        self.setupUi(self)
+
+        self._controller = controller
 
