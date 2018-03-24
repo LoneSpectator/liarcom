@@ -3,7 +3,7 @@
 # 本项目由@Everyb0dyLies开发维护，使用python3
 
 from tools import *
-import uuid, time, random, struct, socket, threading, logging
+import uuid, time, random, struct, socket, threading, sys, logging
 
 # local config
 USER_NAME = ""
@@ -13,8 +13,8 @@ LOCAL_IP = ""  # 选填，默认为空，应填写本机IP，如：192.168.100.1
 # app config
 AUTO_RELOGIN = True
 RETRY_TIMES = 3
-LOG_LEVEL = logging.WARNING
-# login config
+LOG_LEVEL = logging.INFO
+# login config  # 请勿随意更改
 SERVER_IP = '192.168.211.3'
 DHCP_SERVER_IP = '211.68.32.204'
 CONTROL_CHECK_STATUS = b'\x20'
@@ -117,7 +117,6 @@ class Liarcom(object):
         except DrcomException as e:
             Log(logging.ERROR, 110, "[Liarcom._login]：登陆失败，" + e.info)
             
-
     def _auto_relogin(self):
         time_flag = time.time() - self._relogin_timeout
         last_times = self._relogin_retry_times
@@ -459,7 +458,7 @@ class Drcom(object):
                 continue
 
             if (data[0:2] == b'\x02\x03'):
-                Log(logging.INFO, 0, "[Drcom.logout]登出准备包发送成功。")
+                Log(logging.INFO, 0, "[Drcom.logout]：登出准备包发送成功。")
                 break
 
             Log(logging.ERROR, 70, "[Drcom.logout]：Receive unknown packages.")
@@ -485,7 +484,7 @@ class Drcom(object):
                 continue
 
             if (data[0] == 0x04):
-                Log(logging.INFO, 0, "[Drcom.logout]登出成功。")
+                Log(logging.INFO, 0, "[Drcom.logout]：登出成功。")
                 return True
 
             Log(logging.ERROR, 71, "[Drcom.logout]：Receive unknown packages.")
@@ -494,10 +493,9 @@ class Drcom(object):
         raise e
 
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(filename)s - %(levelname)s: %(message)s')
-
 class Log(object):
     def __init__(self, level, err_no, msg):
+        logging.basicConfig(stream=sys.stdout, level=logging.INFO, format='%(asctime)s - [%(levelname)s]: %(message)s')
         if (level < LOG_LEVEL):
             return
         if (level == logging.INFO):
