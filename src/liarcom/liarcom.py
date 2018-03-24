@@ -1,10 +1,10 @@
-#coding=UTF-8
+# -*- coding: utf-8 -*-
 # Licensed under the GPLv3
-# 本项目由@Everyb0dyLies开发维护，使用python2.7
+# 本项目由@Everyb0dyLies开发维护，使用python3
 # 目前为测试版，win7, ubuntu1604测试通过，如有任何问题欢迎在本项目的github页面提交issue，或联系qq1768154526
 
-import uuid, time, threading, struct, random, hashlib, re
-import socket
+from tools import md5, int2hex_str, checksum, clean_socket_buffer, print_bytes
+import uuid, time, threading, random, struct, socket
 import inspect, ctypes
 
 # local config
@@ -15,14 +15,25 @@ LOCAL_IP = ""  # 选填，默认为空，应填写本机IP，如：192.168.100.1
 # login config
 SERVER_IP = '192.168.211.3'
 DHCP_SERVER_IP = '211.68.32.204'
-CONTROL_CHECK_STATUS = '\x20'
-ADAPTER_NUMBER = '\x01'
-IP_DOG = '\x01'
-AUTH_VERSION = '\x0a\x00'
-KEEP_ALIVE_VERSION = '\xdc\x02'
+CONTROL_CHECK_STATUS = b'\x20'
+ADAPTER_NUMBER = b'\x01'
+IP_DOG = b'\x01'
+AUTH_VERSION = b'\x0a\x00'
+KEEP_ALIVE_VERSION = b'\xdc\x02'
 # app config
 LOG_MODE = 0
 RETRY_TIMES = 3
+
+
+def log(log_type, err_no, msg):
+    if (log_type < LOG_MODE):
+        return
+    if (log_type == 0):
+        print("[info]" + msg)
+    if (log_type == 1):
+        print("[warning]" + msg)
+    if (log_type == 2):
+        print("[error]" + "err_no:" + str(err_no) + ", " + msg)
 
 
 def _async_raise(tid, exctype):
@@ -58,13 +69,13 @@ class Drcom(object):
         self.pwd = pwd
 
         self.server_ip = ""
-        self.salt = ""
+        self.salt = b""
         self.auth_info = ""
 
         if (LOCAL_MAC == ""):  # 如果没有指定本机MAC，尝试自动获取
-            self.mac = uuid.UUID(int=uuid.getnode()).hex[-12:].decode("hex")
+            self.mac = bytes().fromhex(uuid.UUID(int=uuid.getnode()).hex[-12:])
         else:
-            self.mac = LOCAL_MAC.decode("hex")
+            self.mac = bytes().fromhex(LOCAL_MAC)
         self.host_name = socket.getfqdn(socket.gethostname())
         if (LOCAL_IP == ""):
             self.ip = socket.gethostbyname(self.host_name)
@@ -82,7 +93,7 @@ class Drcom(object):
     def prepare(self):
         # 获取服务器IP和Salt
         random_value = struct.pack("<H", int(time.time() + random.randint(0xF, 0xFF)) % (0xFFFF))
-        pkg = '\x01\x02' + random_value + '\x0a' + '\x00' * 15
+        pkg = b'\x01\x02' + random_value + b'\x0a' + b'\x00' * 15
 
         if (not SERVER_IP == ''):
             last_times = RETRY_TIMES
@@ -98,7 +109,7 @@ class Drcom(object):
                     log(1, 0, "[prepare]：Timeout, retrying...")
                     continue
 
-                if (data[0:4] == '\x02\x02' + random_value):
+                if (data[0:4] == b'\x02\x02' + random_value):
                     self.server_ip = address[0]
                     self.salt = data[4:8]
                     return True
@@ -119,7 +130,7 @@ class Drcom(object):
                 log(1, 0, "[prepare]：Timeout, retrying...")
                 continue
 
-            if (data[0:4] == '\x02\x02' + random_value):
+            if (data[0:4] == b'\x02\x02' + random_value):
                 self.server_ip = address[0]
                 self.salt = data[4:8]
                 log(0, 0, "[prepare]：Server IP: " + self.server_ip)
@@ -133,41 +144,41 @@ class Drcom(object):
 
     def make_login_package(self):
         # 构造登陆包
-        data = '\x03\x01\x00' + chr(len(self.usr) + 20)  # (0:3 4) Header = Code + Type + EOF + (UserName Length + 20)
-        data += md5('\x03\x01' + self.salt + self.pwd)  # (4:19 16) MD5_A = MD5(Code + Type + Salt + Password)
-        data += self.usr.ljust(36, '\x00')  # (20:55 36) 用户名
+        data = b'\x03\x01\x00' + int2hex_str(len(self.usr) + 20)  # (0:3 4) Header = Code + Type + EOF + (UserName Length + 20)
+        data += md5(b'\x03\x01' + self.salt + self.pwd.encode('ascii'))  # (4:19 16) MD5_A = MD5(Code + Type + Salt + Password)
+        data += self.usr.encode('ascii').ljust(36, b'\x00')  # (20:55 36) 用户名
         data += CONTROL_CHECK_STATUS  # (56:56 1) 控制检查状态
         data += ADAPTER_NUMBER  # (57:57 1) 适配器编号？
-        data += int2hex_str(long(data[4:10].encode('hex'), 16) ^ long(self.mac.encode('hex'), 16)).rjust(6, '\x00')  # (58:63 6) (MD5_A xor MAC)
-        data += md5('\x01' + self.pwd + self.salt + '\x00'*4)  # (64:79 16) MD5_B = MD5(0x01 + Password + Salt + 0x00 *4)
-        data += '\x01'  # (80:80 1) NIC Count
+        data += int2hex_str(int.from_bytes(data[4:10], 'big') ^ int.from_bytes(self.mac, 'big')).rjust(6, b'\x00')  # (58:63 6) (MD5_A xor MAC)
+        data += md5(b'\x01' + self.pwd.encode('ascii') + self.salt + b'\x00'*4)  # (64:79 16) MD5_B = MD5(0x01 + Password + Salt + 0x00 *4)
+        data += b'\x01'  # (80:80 1) NIC Count
         data += socket.inet_aton(self.ip)  # (81:84 4) 本机IP
-        data += '\00' * 4  # (85:88 4) ip地址 2
-        data += '\00' * 4  # (89:92 4) ip地址 3
-        data += '\00' * 4  # (93:96 4) ip地址 4
-        data += md5(data + '\x14\x00\x07\x0b')[:8]  # (97:104 8) 校验和A
+        data += b'\00' * 4  # (85:88 4) ip地址 2
+        data += b'\00' * 4  # (89:92 4) ip地址 3
+        data += b'\00' * 4  # (93:96 4) ip地址 4
+        data += md5(data + b'\x14\x00\x07\x0b')[:8]  # (97:104 8) 校验和A
         data += IP_DOG  # (105:105 1) IP Dog
-        data += '\x00' * 4  # (106:109 4) 未知
-        data += self.host_name.ljust(32, '\x00')  # (110:141 32) 主机名
-        data += '\x72\x72\x72\x72'  # (142:145 4) 主要dns: 114.114.114.114
+        data += b'\x00' * 4  # (106:109 4) 未知
+        data += self.host_name.encode('ascii').ljust(32, b'\x00')  # (110:141 32) 主机名
+        data += b'\x72\x72\x72\x72'  # (142:145 4) 主要dns: 114.114.114.114
         data += socket.inet_aton(DHCP_SERVER_IP)  # (146:149 4) DHCP服务器IP
-        data += '\x08\x08\x08\x08'  # (150:153 4) 备用dns:8.8.8.8
-        data += '\x00' * 8  # (154:161 8) 未知
-        data += '\x94\x00\x00\x00'  # (162:165 4) 未知
-        data += '\x06\x00\x00\x00'  # (166:169 4) OS major 不同客户端有差异
-        data += '\x01\x00\x00\x00'  # (170:173 4) OS minor 不同客户端有差异
-        data += '\xb1\x1d\x00\x00'  # (174:177 4) OS build 不同客户端有差异
-        data += '\x02\x00\x00\x00'  # (178:181 4) 未知 OS相关
-        data += "WINDOWS".ljust(32, '\x00')  # (182:213 32) 操作系统名称
-        data += '\x00' * 96  # (214:309 96) 未知 不同客户端有差异，BISTU版此字段包含一段识别符，但不影响登陆
+        data += b'\x08\x08\x08\x08'  # (150:153 4) 备用dns:8.8.8.8
+        data += b'\x00' * 8  # (154:161 8) 未知
+        data += b'\x94\x00\x00\x00'  # (162:165 4) 未知
+        data += b'\x06\x00\x00\x00'  # (166:169 4) OS major 不同客户端有差异
+        data += b'\x01\x00\x00\x00'  # (170:173 4) OS minor 不同客户端有差异
+        data += b'\xb1\x1d\x00\x00'  # (174:177 4) OS build 不同客户端有差异
+        data += b'\x02\x00\x00\x00'  # (178:181 4) 未知 OS相关
+        data += "WINDOWS".encode('ascii').ljust(32, b'\x00')  # (182:213 32) 操作系统名称
+        data += b'\x00' * 96  # (214:309 96) 未知 不同客户端有差异，BISTU版此字段包含一段识别符，但不影响登陆
         data += AUTH_VERSION  # (310:311 2)
-        data += '\x02\x0c'  # (312:313 2) 未知
-        data += checksum(data + '\x01\x26\x07\x11\x00\x00' + self.mac)  # (314:317 4) 校验和
-        data += '\x00\x00'  # (318:319 2) 未知
+        data += b'\x02\x0c'  # (312:313 2) 未知
+        data += checksum(data + b'\x01\x26\x07\x11\x00\x00' + self.mac)  # (314:317 4) 校验和
+        data += b'\x00\x00'  # (318:319 2) 未知
         data += self.mac   # (320:325 6) 本机MAC
-        data += '\x00'  # (326:326 1) auto logout / default: False
-        data += '\x00'  # (327:327 1) broadcast mode / default : False
-        data += '\x17\x77'  # (328:329 2) 未知 不同客户端有差异
+        data += b'\x00'  # (326:326 1) auto logout / default: False
+        data += b'\x00'  # (327:327 1) broadcast mode / default : False
+        data += b'\x17\x77'  # (328:329 2) 未知 不同客户端有差异
         return data
 
     def login(self):
@@ -186,18 +197,18 @@ class Drcom(object):
             except socket.timeout as e:
                 log(1, 0, "[login]：Timeout, retrying...")
                 continue
-
-            if (data[0] == '\x04'):
+                
+            if (data[0] == 0x04):
                 self.auth_info = data[23:39]
                 log(0, 0, "[login]：Login success.")
                 return True
-            if (data[0] == '\x05'):
-                if (data[32] == '\x31'):
+            if (data[0] == 0x05):
+                if (data[32] == 0x31):
                     log(2, 31, "Wrong username！")
-                if (data[32] == '\x33'):
+                if (data[32] == 0x33):
                     log(2, 32, "Wrong password！")
                 return False
-
+            
             log(2, 30, "[login]：Receive unknown packages.")
         e = TimeoutException()
         e.error_info = "Can not login！"
@@ -206,12 +217,12 @@ class Drcom(object):
 
     def send_alive_pkg1(self):
         # 发送心跳包
-        pkg = '\xff'
-        pkg += md5('\x03\x01' + self.salt + self.pwd)  # MD5_A
-        pkg += '\x00' * 3  # 未知
+        pkg = b'\xff'
+        pkg += md5(b'\x03\x01' + self.salt + self.pwd.encode('ascii'))  # MD5_A
+        pkg += b'\x00' * 3  # 未知
         pkg += self.auth_info
         pkg += struct.pack('!H', int(time.time()) % 0xFFFF)
-        # pkg += '\x00' * 3
+        # pkg += b'\x00' * 3
 
         last_times = RETRY_TIMES
         while last_times > 0:
@@ -226,7 +237,7 @@ class Drcom(object):
                 log(1, 0, "[send_alive_pkg1]：Timeout, retrying...")
                 continue
 
-            if (data[0] == '\x07'):
+            if (data[0] == 0x07):
                 log(0, 0, "[send_alive_pkg1]：Alive pkg1 send success")
                 return True
 
@@ -238,28 +249,28 @@ class Drcom(object):
 
     def make_alive_package(self, num, key, type):
         # 构造心跳包
-        data = '\x07'  # (0:0 1) 未知
-        data += chr(num % 256)  # (1:1 1) 编号
-        data += '\x28\x00\x0b'  # (2:4 3) 未知
-        data += chr(type)  # (5:5 1) 类型
+        data = b'\x07'  # (0:0 1) 未知
+        data += int2hex_str(num % 256)  # (1:1 1) 编号
+        data += b'\x28\x00\x0b'  # (2:4 3) 未知
+        data += int2hex_str(type)  # (5:5 1) 类型
         if (num == 0):  # (6:7 2) BISTU版此字段不会变化
-            data += '\xdc\x02'
+            data += b'\xdc\x02'
         else:
             data += KEEP_ALIVE_VERSION
-        data += '\x2f\x79'  # (8:9 2) 未知 每个包会有变化
-        data += '\x00' * 6  # (10:15 6) 未知
+        data += b'\x2f\x79'  # (8:9 2) 未知 每个包会有变化
+        data += b'\x00' * 6  # (10:15 6) 未知
         data += key  # (16:19 4)
-        data += '\x00' * 4  # (20:23 4) 未知
+        data += b'\x00' * 4  # (20:23 4) 未知
         # data += struct.pack("!H",0xdc02)  # 未验证
 
         if (type == 1):
-            data += '\x00' * 16  # (24:39 16) 未知
+            data += b'\x00' * 16  # (24:39 16) 未知
         if (type == 3):  # 未验证
-            foo = ''.join([chr(int(i)) for i in self.ip.split('.')])  # host_ip
+            foo = b''.join([int2hex_str(int(i)) for i in self.ip.split('.')])  # host_ip
             # use double keep in main to keep online .Ice
-            crc = '\x00' * 4
-            # data += struct.pack("!I",crc) + foo + '\x00' * 8
-            data += crc + foo + '\x00' * 8
+            crc = b'\x00' * 4
+            # data += struct.pack("!I",crc) + foo + b'\x00' * 8
+            data += crc + foo + b'\x00' * 8
         return data
 
     def send_alive_pkg2(self, num, key, type):
@@ -279,7 +290,7 @@ class Drcom(object):
                 log(1, 0, "[send_alive_pkg2]：Timeout, retrying...")
                 continue
 
-            if (data[0] == '\x07'):
+            if (data[0] == 0x07):
                 log(0, 0, "[send_alive_pkg2]：Alive pkg2 send success，NO：%d" % num)
                 return data[16:20]
 
@@ -291,7 +302,7 @@ class Drcom(object):
 
     def keep_alive(self):
         num = 0
-        key = '\x00' * 4
+        key = b'\x00' * 4
         while True:
             try:
                 self.send_alive_pkg1()
@@ -306,13 +317,13 @@ class Drcom(object):
             time.sleep(20)
 
     def make_logout_package(self):
-        data = '\x06\x01\x00' + chr(len(self.usr) + 20)  # (0:3 4) Header = Code + Type + EOF + (UserName Length + 20)
+        data = b'\x06\x01\x00' + int2hex_str(len(self.usr) + 20)  # (0:3 4) Header = Code + Type + EOF + (UserName Length + 20)
         # TODO MD5_A字段在BISTU版中的算法未知，但以下算法可以正常使用
-        data += md5('\x06\x01' + self.salt + self.pwd)  # (4:19 16) MD5_A = MD5(Code + Type + Salt + Password)
-        data += self.usr.ljust(36, '\x00')  # (20:55 36) 用户名
+        data += md5(b'\x06\x01' + self.salt + self.pwd.encode('ascii'))  # (4:19 16) MD5_A = MD5(Code + Type + Salt + Password)
+        data += self.usr.encode('ascii').ljust(36, b'\x00')  # (20:55 36) 用户名
         data += CONTROL_CHECK_STATUS  # (56:56 1) 控制检查状态
         data += ADAPTER_NUMBER  # (57:57 1) 适配器编号？
-        data += int2hex_str(long(data[4:10].encode('hex'), 16) ^ long(self.mac.encode('hex'), 16)).rjust(6, '\x00')  # (58:63 6) (MD5_A xor MAC)
+        data += int2hex_str(int.from_bytes(data[4:10], 'big') ^ int.from_bytes(self.mac, 'big')).rjust(6, b'\x00')  # (58:63 6) (MD5_A xor MAC)
         data += self.auth_info
         return data
 
@@ -328,10 +339,10 @@ class Drcom(object):
         self.send_alive_pkg1()  # 发送的数据包的最后两个字节可能有验证功能
 
         # 第二组 登出准备
-        pkg = '\x01\x03'
-        pkg += '\x00\x00'  # 与alive_pkg1的最后两个字节相同
-        pkg += '\x0a'
-        pkg += '\x00' * 15
+        pkg = b'\x01\x03'
+        pkg += b'\x00\x00'  # 与alive_pkg1的最后两个字节相同
+        pkg += b'\x0a'
+        pkg += b'\x00' * 15
 
         last_times = RETRY_TIMES
         while last_times > 0:
@@ -346,7 +357,7 @@ class Drcom(object):
                 log(1, 0, "[logout]：Timeout, retrying...")
                 continue
 
-            if (data[0:2] == '\x02\x03'):
+            if (data[0:2] == b'\x02\x03'):
                 log(0, 0, "[logout]：Logout prepare pkg send success.")
                 break
 
@@ -373,12 +384,11 @@ class Drcom(object):
                 log(1, 0, "[logout]：Timeout, retrying...")
                 continue
 
-            if (data[0] == '\x04'):
+            if (data[0] == 0x04):
                 log(0, 0, "[logout]：Logout success.")
                 return True
 
             log(2, 71, "[logout]：Receive unknown packages.")
-            print_bytes(data)
         e = TimeoutException()
         e.error_info = "Logout failed！"
         e.last_pkg = pkg
@@ -386,9 +396,9 @@ class Drcom(object):
 
 
 if __name__ == "__main__":
-    print "欢迎使用专为北信科开发的liarcom"
-    print "本项目由@Everyb0dyLies开发维护"
-    print "目前为测试版，如有任何问题欢迎在本项目的github页面提交issue"
+    print("欢迎使用专为北信科开发的liarcom")
+    print("本项目由@Everyb0dyLies开发维护")
+    print("目前为测试版，如有任何问题欢迎在本项目的github页面提交issue")
     drcom = Drcom()
 
     try:
@@ -399,15 +409,15 @@ if __name__ == "__main__":
         keep_alive_thread = threading.Thread(target = drcom.keep_alive, args =())
         keep_alive_thread.start()
 
-        print "登陆成功，登出请输入logout。"
+        print("登陆成功，登出请输入logout。")
         while True:
-            user_input = raw_input()
+            user_input = input()
             if (user_input == "logout"):
                 stop_thread(keep_alive_thread)
                 drcom.logout()
                 break
             else:
-                print "登出请输入logout。"
+                print("登出请输入logout。")
     except TimeoutException as e:
         log(2, 10, "[main]：" + e.error_info)
 
