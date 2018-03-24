@@ -2,6 +2,41 @@
 
 import hashlib, struct, socket
 
+# app config
+PRINT_MODE = 0
+LOG_MODE = 0
+
+
+class DrcomException(Exception):
+    def __init__(self, *args, **kwargs):
+        super(DrcomException, self).__init__(args, kwargs)
+        if (len(args[0]) > 0):
+            self.info = args[0][0]
+
+
+class LiarcomException(Exception):
+    def __init__(self, *args, **kwargs):
+        super(LiarcomException, self).__init__(args, kwargs)
+        if (len(args[0]) > 0):
+            self.info = args[0][0]
+
+
+class TimeoutException(DrcomException):
+    def __init__(self, *args, **kwargs):
+        super(TimeoutException, self).__init__(args, kwargs)
+        self.last_pkg = None
+
+
+def log(log_type, err_no, msg):
+    if (log_type < PRINT_MODE):
+        return
+    if (log_type == 0):
+        print("[info]" + msg)
+    if (log_type == 1):
+        print("[warning]" + msg)
+    if (log_type == 2):
+        print("[error]" + "err_no:" + str(err_no) + ", " + msg)
+
 
 def md5(str):
     m = hashlib.md5()
@@ -17,13 +52,13 @@ def int2hex_str(num):
 
 
 def checksum(b):
-    """
+    '''
     在python2中的循环如下
     for i in re.findall('....', s):
         ret ^= int(i[::-1].encode('hex'), 16)
     校验和以4个字节为一组进行计算，遇到b'\x0a'时，从b'\x0a'之后开始重新分组
     为了能匹配b'\x0a'，不得不加入一个if
-    """ 
+    '''
     ret = 1234
     i = 0
     while (i + 4 < len(b)):
