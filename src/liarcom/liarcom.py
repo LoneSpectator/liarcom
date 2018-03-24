@@ -1,10 +1,9 @@
 # -*- coding: utf-8 -*-
 # Licensed under the GPLv3
 # 本项目由@Everyb0dyLies开发维护，使用python3
-# 目前为测试版，win7, ubuntu1604测试通过，如有任何问题欢迎在本项目的github页面提交issue，或联系qq1768154526
 
 from tools import *
-import uuid, time, random, struct, socket, threading
+import uuid, time, random, struct, socket, threading, logging
 
 # local config
 USER_NAME = ""
@@ -12,7 +11,9 @@ PASSWORD = ""
 LOCAL_MAC = ""  # 选填，默认为空，应填写本机网卡MAC，全小写，无连接符，如：001a264a7b0d
 LOCAL_IP = ""  # 选填，默认为空，应填写本机IP，如：192.168.100.123
 # app config
+AUTO_RELOGIN = True
 RETRY_TIMES = 3
+LOG_LEVEL = logging.WARNING
 # login config
 SERVER_IP = '192.168.211.3'
 DHCP_SERVER_IP = '211.68.32.204'
@@ -29,7 +30,58 @@ class Liarcom(object):
         print("本项目由@Everyb0dyLies开发维护")
         print("目前为测试版，如有任何问题欢迎在本项目的github页面提交issue")
 
-        self._drcom = Drcom(usr, pwd)
+        self._usr = usr
+        self._pwd = pwd
+        self._drcom = Drcom(self._usr, self._pwd)
+        self._auto_relogin_flag = AUTO_RELOGIN
+        self._relogin_timeout = 300
+        self._relogin_retry_times = RETRY_TIMES
+
+    @property
+    def user(self):
+        return self._usr
+
+    @user.setter
+    def user(self, value):
+        if (value == ""):
+            raise LiarcomException("用户名错误！")
+        self._usr = value
+        self._drcom.usr = value
+
+    @property
+    def password(self):
+        return self._pwd
+
+    @password.setter
+    def password(self, value):
+        if (value == ""):
+            raise LiarcomException("密码错误！")
+        self._pwd = value
+        self._drcom.pwd = value
+
+    @property
+    def auto_relogin_flag(self):
+        return self._auto_relogin_flag
+
+    @auto_relogin_flag.setter
+    def auto_relogin_flag(self, value):
+        self._auto_relogin_flag = value
+
+    @property
+    def relogin_retry_times(self):
+        return self._relogin_retry_times
+
+    @relogin_retry_times.setter
+    def relogin_retry_times(self, value):
+        self._relogin_retry_times = value
+
+    @property
+    def relogin_timeout(self):
+        return self._relogin_timeout
+
+    @relogin_timeout.setter
+    def relogin_timeout(self, value):
+        self._relogin_timeout = value
 
     @property
     def status(self):
@@ -42,35 +94,65 @@ class Liarcom(object):
             return "offline"
 
     def login(self):
-        log(0, 0, "[Liarcom.login]：开始登陆。")
+        self._login()
+        if self.auto_relogin_flag:
+            auto_relogin_thread = threading.Thread(target = self._auto_relogin, args =())
+            auto_relogin_thread.start()
+            Log(logging.INFO, 0, "[Liarcom.login]：已启动自动重登陆线程。")
+
+    def _login(self):
+        if (self._drcom.usr == "" or self._drcom.pwd == ""):
+            raise LiarcomException("缺少必要参数！")
+        Log(logging.INFO, 0, "[Liarcom._login]：开始登陆。")
         try:
             if (not self._drcom.prepare()):
-                log(2, 111, "[Liarcom.login]：登陆失败！")
+                Log(logging.ERROR, 111, "[Liarcom._login]：登陆失败！")
                 return
             if (not self._drcom.login()):
-                log(2, 112, "[Liarcom.login]：登陆失败！")
+                Log(logging.ERROR, 112, "[Liarcom._login]：登陆失败！")
                 return
             keep_alive_thread = threading.Thread(target = self._drcom.keep_alive, args =())
             keep_alive_thread.start()
-            log(0, 0, "[Liarcom.login]：登陆成功，已启动心跳保持线程。")
+            Log(logging.INFO, 0, "[Liarcom._login]：登陆成功，已启动心跳保持线程。")
         except DrcomException as e:
-            log(2, 110, "[Liarcom.login]：登陆失败，" + e.info)
+            Log(logging.ERROR, 110, "[Liarcom._login]：登陆失败，" + e.info)
+            
+
+    def _auto_relogin(self):
+        time_flag = time.time() - self._relogin_timeout
+        last_times = self._relogin_retry_times
+        while (self.auto_relogin_flag and self._drcom.login_flag):
+            if (self.status == "timeout"):
+                if (last_times <= 0):
+                    Log(logging.ERROR, 120, "[Liarcom._auto_relogin]：超出最大重试次数！")
+                    self._drcom.login_flag = False
+                    raise LiarcomException("[Liarcom]已在%ds内重试登录%d次，但没有成功！" % (self._relogin_timeout, self._relogin_retry_times))
+                if (last_times == self._relogin_retry_times):
+                    time_flag = time.time()
+                last_times = last_times - 1
+                Log(logging.WARNING, 0, "[Liarcom._auto_relogin]：开始重新登录，剩余%d次。" % last_times)
+                self._login()
+            else:
+                if (not last_times == self._relogin_retry_times and time.time() - time_flag > self._relogin_timeout):
+                    Log(logging.INFO, 0, "[Liarcom._auto_relogin]：重设重试次数。")
+                    last_times = self._relogin_retry_times
+                time.sleep(0.1)
 
     def logout(self):
-        log(0, 0, "[Liarcom.logout]：开始登出。")
+        if (self._drcom.usr == "" or self._drcom.pwd == ""):
+            raise LiarcomException("缺少必要参数！")
+        Log(logging.INFO, 0, "[Liarcom.logout]：开始登出。")
         try:
             if (not self._drcom.logout()):
-                log(2, 121, "[Liarcom.logout]：登出失败！")
+                Log(logging.ERROR, 131, "[Liarcom.logout]：登出失败！")
                 return
-            log(0, 0, "[Liarcom.logout]：登出成功。")
+            Log(logging.INFO, 0, "[Liarcom.logout]：登出成功。")
         except DrcomException as e:
-            log(2, 120, "[Liarcom.logout]：" + e.info)
+            Log(logging.ERROR, 130, "[Liarcom.logout]：" + e.info)
 
 
 class Drcom(object):
     def __init__(self, usr, pwd):
-        if (usr == "" or pwd == ""):
-            raise DrcomException("缺少必要参数！")
         self.usr = usr
         self.pwd = pwd
 
@@ -96,7 +178,7 @@ class Drcom(object):
         try:
             self.socket.bind(("", 61440))
         except socket.error as e:
-            log(2, 10, "[Drcom.__init__]：无法绑定61440端口，请检查您的网络！")
+            Log(logging.ERROR, 10, "[Drcom.__init__]：无法绑定61440端口，请检查您的网络！")
             return None
 
     def prepare(self):
@@ -109,13 +191,13 @@ class Drcom(object):
             while last_times > 0:
                 last_times = last_times - 1
 
-                log(0, 0, "[Drcom.prepare]：Trying to verify the Server IP and get the Salt...")
+                Log(logging.INFO, 0, "[Drcom.prepare]：Trying to verify the Server IP and get the Salt...")
                 clean_socket_buffer(self.socket)
                 self.socket.sendto(pkg, (SERVER_IP, 61440))
                 try:
                     data, address = self.socket.recvfrom(1024)
                 except socket.timeout as e:
-                    log(1, 0, "[Drcom.prepare]：超时，重试中...")
+                    Log(logging.WARNING, 0, "[Drcom.prepare]：超时，重试中...")
                     continue
 
                 if (data[0:4] == b'\x02\x02' + random_value):
@@ -123,29 +205,29 @@ class Drcom(object):
                     self.salt = data[4:8]
                     return True
 
-                log(2, 20, "[Drcom.prepare]：Receive unknown packages.")
+                Log(logging.ERROR, 20, "[Drcom.prepare]：Receive unknown packages.")
 
         last_times = RETRY_TIMES
         while last_times > 0:
             last_times = last_times - 1
 
-            log(0, 0, "[Drcom.prepare]：Trying to get the Server IP and Salt...")
+            Log(logging.INFO, 0, "[Drcom.prepare]：Trying to get the Server IP and Salt...")
             clean_socket_buffer(self.socket)
             self.socket.sendto(pkg, ("1.1.1.1", 61440))
             self.socket.sendto(pkg, ("202.1.1.1", 61440))
             try:
                 data, address = self.socket.recvfrom(1024)
             except socket.timeout as e:
-                log(1, 0, "[Drcom.prepare]：超时，重试中...")
+                Log(logging.WARNING, 0, "[Drcom.prepare]：超时，重试中...")
                 continue
 
             if (data[0:4] == b'\x02\x02' + random_value):
                 self.server_ip = address[0]
                 self.salt = data[4:8]
-                log(0, 0, "[Drcom.prepare]：服务器IP: " + self.server_ip)
+                Log(logging.INFO, 0, "[Drcom.prepare]：服务器IP: " + self.server_ip)
                 return True
 
-            log(2, 21, "[Drcom.prepare]：Receive unknown packages.")
+            Log(logging.ERROR, 21, "[Drcom.prepare]：Receive unknown packages.")
         e = TimeoutException("无法获取服务器IP和Salt！")
         e.last_pkg = pkg
         raise e
@@ -197,28 +279,28 @@ class Drcom(object):
         while last_times > 0:
             last_times = last_times - 1
 
-            log(0, 0, "[Drcom.login]：发送登陆请求...")
+            Log(logging.INFO, 0, "[Drcom.login]：发送登陆请求...")
             clean_socket_buffer(self.socket)
             self.socket.sendto(pkg, (self.server_ip, 61440))
             try:
                 data, address = self.socket.recvfrom(1024)
             except socket.timeout as e:
-                log(1, 0, "[Drcom.login]：超时，重试中...")
+                Log(logging.WARNING, 0, "[Drcom.login]：超时，重试中...")
                 continue
                 
             if (data[0] == 0x04):
                 self.auth_info = data[23:39]
                 self.login_flag = True
-                log(0, 0, "[Drcom.login]：登陆成功")
+                Log(logging.INFO, 0, "[Drcom.login]：登陆成功")
                 return True
             if (data[0] == 0x05):
                 if (data[32] == 0x31):
-                    log(2, 31, "学号错误！")
+                    Log(logging.ERROR, 31, "学号错误！")
                 if (data[32] == 0x33):
-                    log(2, 32, "密码错误！")
+                    Log(logging.ERROR, 32, "密码错误！")
                 return False
             
-            log(2, 30, "[Drcom.login]：Receive unknown packages.")
+            Log(logging.ERROR, 30, "[Drcom.login]：Receive unknown packages.")
         e = TimeoutException("登陆失败！")
         e.last_pkg = pkg
         raise e
@@ -236,20 +318,20 @@ class Drcom(object):
         while last_times > 0:
             last_times = last_times - 1
 
-            log(0, 0, "[Drcom.send_alive_pkg1]：发送心跳包pkg1...")
+            Log(logging.INFO, 0, "[Drcom.send_alive_pkg1]：发送心跳包pkg1...")
             clean_socket_buffer(self.socket)
             self.socket.sendto(pkg, (self.server_ip, 61440))
             try:
                 data, address = self.socket.recvfrom(1024)
             except socket.timeout as e:
-                log(1, 0, "[Drcom.send_alive_pkg1]：超时，重试中...")
+                Log(logging.WARNING, 0, "[Drcom.send_alive_pkg1]：超时，重试中...")
                 continue
 
             if (data[0] == 0x07):
-                log(0, 0, "[Drcom.send_alive_pkg1]：心跳包pkg1发送成功")
+                Log(logging.INFO, 0, "[Drcom.send_alive_pkg1]：心跳包pkg1发送成功")
                 return True
 
-            log(2, 40, "[Drcom.send_alive_pkg1]：Receive unknown packages.")
+            Log(logging.ERROR, 40, "[Drcom.send_alive_pkg1]：Receive unknown packages.")
         e = TimeoutException("心跳包pkg1发送失败！")
         e.last_pkg = pkg
         raise e
@@ -288,20 +370,20 @@ class Drcom(object):
         while last_times > 0:
             last_times = last_times - 1
 
-            log(0, 0, "[Drcom.send_alive_pkg2]：发送心跳包pkg2，NO：%d..." % num)
+            Log(logging.INFO, 0, "[Drcom.send_alive_pkg2]：发送心跳包pkg2，NO：%d..." % num)
             clean_socket_buffer(self.socket)
             self.socket.sendto(pkg, (self.server_ip, 61440))
             try:
                 data, address = self.socket.recvfrom(1024)
             except socket.timeout as e:
-                log(1, 0, "[Drcom.send_alive_pkg2]：超时，重试中...")
+                Log(logging.WARNING, 0, "[Drcom.send_alive_pkg2]：超时，重试中...")
                 continue
 
             if (data[0] == 0x07):
-                log(0, 0, "[Drcom.send_alive_pkg2]：心跳包pkg2发送成功，NO：%d" % num)
+                Log(logging.INFO, 0, "[Drcom.send_alive_pkg2]：心跳包pkg2发送成功，NO：%d" % num)
                 return data[16:20]
 
-            log(2, 50, "[Drcom.send_alive_pkg2]：Receive unknown packages.")
+            Log(logging.ERROR, 50, "[Drcom.send_alive_pkg2]：Receive unknown packages.")
         e = TimeoutException("心跳包pkg2发送失败，NO:%d！" % num)
         e.last_pkg = pkg
         raise e
@@ -319,8 +401,8 @@ class Drcom(object):
                     key = self._send_alive_pkg2(num, key, type=3)
                 except TimeoutException as e:
                     self.keep_alive_flag = False
-                    log(2, 60, "[Drcom.keep_alive]：" + e.info)
-                    return False
+                    Log(logging.ERROR, 60, "[Drcom.keep_alive]：" + e.info)
+                    return
 
                 num = num + 2
                 time_flag = time_flag + 20
@@ -364,20 +446,20 @@ class Drcom(object):
         while last_times > 0:
             last_times = last_times - 1
 
-            log(0, 0, "[Drcom.logout]：发送登出准备包...")
+            Log(logging.INFO, 0, "[Drcom.logout]：发送登出准备包...")
             clean_socket_buffer(self.socket)
             self.socket.sendto(pkg, (self.server_ip, 61440))
             try:
                 data, address = self.socket.recvfrom(1024)
             except socket.timeout as e:
-                log(1, 0, "[Drcom.logout]：超时，重试中...")
+                Log(logging.WARNING, 0, "[Drcom.logout]：超时，重试中...")
                 continue
 
             if (data[0:2] == b'\x02\x03'):
-                log(0, 0, "[Drcom.logout]登出准备包发送成功。")
+                Log(logging.INFO, 0, "[Drcom.logout]登出准备包发送成功。")
                 break
 
-            log(2, 70, "[Drcom.logout]：Receive unknown packages.")
+            Log(logging.ERROR, 70, "[Drcom.logout]：Receive unknown packages.")
         if (last_times == 0):
             e = TimeoutException("登出准备包发送失败！")
             e.last_pkg = pkg
@@ -390,21 +472,35 @@ class Drcom(object):
         while last_times > 0:
             last_times = last_times - 1
 
-            log(0, 0, "[Drcom.logout]：发送登出请求...")
+            Log(logging.INFO, 0, "[Drcom.logout]：发送登出请求...")
             clean_socket_buffer(self.socket)
             self.socket.sendto(pkg, (self.server_ip, 61440))
             try:
                 data, address = self.socket.recvfrom(1024)
             except socket.timeout as e:
-                log(1, 0, "[Drcom.logout]：超时，重试中...")
+                Log(logging.WARNING, 0, "[Drcom.logout]：超时，重试中...")
                 continue
 
             if (data[0] == 0x04):
-                log(0, 0, "[Drcom.logout]登出成功。")
+                Log(logging.INFO, 0, "[Drcom.logout]登出成功。")
                 return True
 
-            log(2, 71, "[Drcom.logout]：Receive unknown packages.")
+            Log(logging.ERROR, 71, "[Drcom.logout]：Receive unknown packages.")
         e = TimeoutException("登出失败！")
         e.last_pkg = pkg
         raise e
+
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(filename)s - %(levelname)s: %(message)s')
+
+class Log(object):
+    def __init__(self, level, err_no, msg):
+        if (level < LOG_LEVEL):
+            return
+        if (level == logging.INFO):
+            logging.info(msg)
+        if (level == logging.WARNING):
+            logging.warning(msg)
+        if (level == logging.ERROR):
+            logging.error("err_no:" + str(err_no) + ", " + msg)
 

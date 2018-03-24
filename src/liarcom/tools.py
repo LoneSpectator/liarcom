@@ -1,10 +1,8 @@
 # -*- coding: utf-8 -*-
+# Licensed under the GPLv3
+# 本项目由@Everyb0dyLies开发维护，使用python3
 
 import hashlib, struct, socket
-
-# app config
-PRINT_MODE = 0
-LOG_MODE = 0
 
 
 class DrcomException(Exception):
@@ -25,17 +23,6 @@ class TimeoutException(DrcomException):
     def __init__(self, *args, **kwargs):
         super(TimeoutException, self).__init__(args, kwargs)
         self.last_pkg = None
-
-
-def log(log_type, err_no, msg):
-    if (log_type < PRINT_MODE):
-        return
-    if (log_type == 0):
-        print("[info]" + msg)
-    if (log_type == 1):
-        print("[warning]" + msg)
-    if (log_type == 2):
-        print("[error]" + "err_no:" + str(err_no) + ", " + msg)
 
 
 def md5(str):
