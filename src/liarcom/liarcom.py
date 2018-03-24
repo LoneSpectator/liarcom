@@ -141,6 +141,9 @@ class Liarcom(object):
     def logout(self):
         if (self._drcom.usr == "" or self._drcom.pwd == ""):
             raise LiarcomException("缺少必要参数！")
+        if (self.status == "offline"):
+            return
+        
         Log(logging.INFO, 0, "[Liarcom.logout]：开始登出。")
         try:
             if (not self._drcom.logout()):
