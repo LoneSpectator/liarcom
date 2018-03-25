@@ -1,5 +1,7 @@
 # liarcom
 
+[![PyPI version](https://img.shields.io/pypi/v/liarcom.svg)](https://pypi.python.org/pypi/liarcom)
+
 基于python3的第三方Drcom登录器。由[@EverybodyLies](https://github.com/Everyb0dyLies)开发维护。
 
 本登陆器有图形界面和命令行两种运行模式，图形界面基于PyQt5实现，可跨平台运行，在路由器上可以以命令行模式运行。
