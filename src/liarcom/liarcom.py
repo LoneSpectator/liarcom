@@ -505,3 +505,18 @@ class Log(object):
         if (level == logging.ERROR):
             logging.error("err_no:" + str(err_no) + ", " + msg)
 
+# 用于命令行模式
+if __name__ == '__main__':
+    liarcom = Liarcom()
+    try:
+        liarcom.login()
+        user_input = ""
+        while (not user_input == "logout"):
+            print("登出请输入logout")
+            user_input = input()
+
+        liarcom.logout()
+        
+    except KeyboardInterrupt as e:
+        liarcom.logout()
+
