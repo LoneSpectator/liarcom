@@ -296,10 +296,11 @@ class Drcom(object):
                 Log(logging.INFO, 0, "[Drcom.login]：登陆成功")
                 return True
             if (data[0] == 0x05):
-                if (data[32] == 0x31):
-                    Log(logging.ERROR, 31, "学号错误！")
-                if (data[32] == 0x33):
-                    Log(logging.ERROR, 32, "密码错误！")
+                if (len(data) > 32):
+                    if (data[32] == 0x31):
+                        Log(logging.ERROR, 31, "学号错误！")
+                    if (data[32] == 0x33):
+                        Log(logging.ERROR, 32, "密码错误！")
                 return False
             
             Log(logging.ERROR, 30, "[Drcom.login]：Receive unknown packages.")
